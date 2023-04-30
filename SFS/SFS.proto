@@ -1,0 +1,42 @@
+syntax = "proto3";
+option go_package = "./";
+
+package SFS;
+
+service Node {
+  rpc GetLoad(Empty) returns (Load) {}
+  rpc Download(DownloadMessage) returns (ACK) {}
+}
+
+service Tracking {
+  rpc Find (String) returns (IDs) {}
+  rpc UpdateList(UpdateMessage) returns (ACK) {}
+}
+
+message Empty {}
+
+message Load {
+  int32 load = 1;
+}
+
+message String {
+  string message = 1;
+}
+
+message DownloadMessage {
+  string filename = 1;
+  int32 NodeID = 2;
+}
+
+message UpdateMessage {
+  int32 NodeID = 1;
+  string filename = 2;
+}
+
+message IDs {
+  repeated int32 NodeID = 1;
+}
+
+message ACK {
+  bool success = 1;
+}
