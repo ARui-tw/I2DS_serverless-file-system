@@ -5,7 +5,7 @@ package SFS;
 
 service Node {
   rpc GetLoad(Empty) returns (Load) {}
-  rpc Download(DownloadMessage) returns (ACK) {}
+  rpc Download(DownloadMessage) returns (Load) {}
   rpc GetList(Empty) returns (ACK) {}
 }
 

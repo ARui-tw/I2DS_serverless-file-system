@@ -3,13 +3,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"net"
+	"os"
+	"sync"
+	"time"
 
 	pb "github.com/ARui-tw/I2DS_serverless-file-system/SFS"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 var (
@@ -18,9 +24,25 @@ var (
 )
 
 var (
-	m   map[string][]int32
-	md5 map[string]string
+	m      map[string][]int32
+	md5    map[string]string
+	config Config
 )
+
+type Config struct {
+	Nodes   []NodeInfo `json:"nodes"`
+	Primary int        `json:"primary"`
+}
+
+type NodeInfo struct {
+	ID      int           `json:"id"`
+	Latency []LatencyInfo `json:"latency"`
+}
+
+type LatencyInfo struct {
+	Dest int `json:"dest"`
+	Lat  int `json:"latency"`
+}
 
 type server struct {
 	pb.UnimplementedTrackingServer
@@ -53,21 +75,73 @@ func (s *server) UpdateList(ctx context.Context, in *pb.UpdateMessage) (*pb.ACK,
 	return &pb.ACK{Success: true}, nil
 }
 
-func main() {
-	flag.Parse()
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+func getListUpdate() {
+	for _, node := range config.Nodes {
+		conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", node.ID), grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+		if err != nil {
+			log.Error(err)
+			return
+		}
+		defer conn.Close()
+
+		c := pb.NewNodeClient(conn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		r, err := c.GetList(ctx, &pb.Empty{})
+		if err != nil {
+			log.Info("Node ", node.ID, " is not on")
+			continue
+		}
+
+		if !r.GetSuccess() {
+			log.Fatal("Get list failed")
+			return
+		}
+
+		log.Info(fmt.Sprint("Node ", node.ID, " list updated"))
+	}
+}
+
+func startServer(addr string) {
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
-
 	s := grpc.NewServer()
+	pb.RegisterTrackingServer(s, &server{})
+	log.Info("Node listening at ", lis.Addr())
+	if err := s.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: ", err)
+	}
+}
+
+func main() {
+	flag.Parse()
+	var wg sync.WaitGroup
+	jsonFile, err := os.Open(*config_file)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	fmt.Println("Successfully Opened json config")
+	defer jsonFile.Close()
+
+	byteValue, _ := ioutil.ReadAll(jsonFile)
+
+	json.Unmarshal(byteValue, &config)
 
 	m = make(map[string][]int32)
 	md5 = make(map[string]string)
 
-	pb.RegisterTrackingServer(s, &server{})
-	log.Info("Single server listening at ", lis.Addr())
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: ", err)
-	}
+	wg.Add(1)
+	go func(addr string) {
+		defer wg.Done()
+		startServer(fmt.Sprintf(":%d", *port))
+	}(fmt.Sprintf(":%d", *port))
+
+	getListUpdate()
+
+	wg.Wait()
 }

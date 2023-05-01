@@ -23,7 +23,8 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeClient interface {
 	GetLoad(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Load, error)
-	Download(ctx context.Context, in *DownloadMessage, opts ...grpc.CallOption) (*ACK, error)
+	Download(ctx context.Context, in *DownloadMessage, opts ...grpc.CallOption) (*Load, error)
+	GetList(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ACK, error)
 }
 
 type nodeClient struct {
@@ -43,9 +44,18 @@ func (c *nodeClient) GetLoad(ctx context.Context, in *Empty, opts ...grpc.CallOp
 	return out, nil
 }
 
-func (c *nodeClient) Download(ctx context.Context, in *DownloadMessage, opts ...grpc.CallOption) (*ACK, error) {
-	out := new(ACK)
+func (c *nodeClient) Download(ctx context.Context, in *DownloadMessage, opts ...grpc.CallOption) (*Load, error) {
+	out := new(Load)
 	err := c.cc.Invoke(ctx, "/SFS.Node/Download", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) GetList(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ACK, error) {
+	out := new(ACK)
+	err := c.cc.Invoke(ctx, "/SFS.Node/GetList", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +67,8 @@ func (c *nodeClient) Download(ctx context.Context, in *DownloadMessage, opts ...
 // for forward compatibility
 type NodeServer interface {
 	GetLoad(context.Context, *Empty) (*Load, error)
-	Download(context.Context, *DownloadMessage) (*ACK, error)
+	Download(context.Context, *DownloadMessage) (*Load, error)
+	GetList(context.Context, *Empty) (*ACK, error)
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -68,8 +79,11 @@ type UnimplementedNodeServer struct {
 func (UnimplementedNodeServer) GetLoad(context.Context, *Empty) (*Load, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLoad not implemented")
 }
-func (UnimplementedNodeServer) Download(context.Context, *DownloadMessage) (*ACK, error) {
+func (UnimplementedNodeServer) Download(context.Context, *DownloadMessage) (*Load, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Download not implemented")
+}
+func (UnimplementedNodeServer) GetList(context.Context, *Empty) (*ACK, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetList not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 
@@ -120,6 +134,24 @@ func _Node_Download_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Node_GetList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).GetList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/SFS.Node/GetList",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).GetList(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Node_ServiceDesc is the grpc.ServiceDesc for Node service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -134,6 +166,10 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Download",
 			Handler:    _Node_Download_Handler,
+		},
+		{
+			MethodName: "GetList",
+			Handler:    _Node_GetList_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

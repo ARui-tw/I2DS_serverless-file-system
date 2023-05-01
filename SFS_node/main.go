@@ -1,4 +1,3 @@
-// Package main implements a server for Bulletin service.
 package main
 
 import (
@@ -13,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -32,9 +32,11 @@ var (
 )
 
 var (
-	addr   string
-	config Config
-	m      map[int32]int
+	addr     string
+	config   Config
+	m        map[int32]int
+	load     int32
+	waitTime int
 )
 
 type Config struct {
@@ -58,17 +60,50 @@ type server struct {
 
 func (s *server) GetLoad(ctx context.Context, in *pb.Empty) (*pb.Load, error) {
 	// TODO: get load
-	return &pb.Load{Load: 0}, nil
+	return &pb.Load{Load: load}, nil
 }
 
-func (s *server) Download(ctx context.Context, in *pb.DownloadMessage) (*pb.ACK, error) {
-	os.MkdirAll(fmt.Sprintf("share/%d/%d", *port, in.GetNodeID()), 0755)
-	_, err := copy(fmt.Sprintf("files/%d/%s", *port, in.GetFilename()), fmt.Sprintf("share/%d/%d/%s", *port, in.GetNodeID(), in.GetFilename()))
+func (s *server) GetList(ctx context.Context, in *pb.Empty) (*pb.ACK, error) {
+	files, err := ioutil.ReadDir(fmt.Sprintf("files/%d", *port))
+
 	if err != nil {
 		log.Error(err)
 		return &pb.ACK{Success: false}, nil
 	}
+
+	for _, f := range files {
+		if !f.IsDir() {
+			if err := updateList(f.Name()); err != nil {
+				log.Error(err)
+			}
+		}
+	}
+
 	return &pb.ACK{Success: true}, nil
+}
+
+func (s *server) Download(ctx context.Context, in *pb.DownloadMessage) (*pb.Load, error) {
+	nodeID := in.GetNodeID()
+
+	os.MkdirAll(fmt.Sprintf("share/%d/%d", *port, nodeID), 0755)
+	_, err := copy(fmt.Sprintf("files/%d/%s", *port, in.GetFilename()), fmt.Sprintf("share/%d/%d/%s", *port, nodeID, in.GetFilename()))
+	if err != nil {
+		log.Error(err)
+		return &pb.Load{Load: -1}, nil
+	}
+
+	// atomic.AddInt32(&load, 1)
+	load++
+	waitTime += m[nodeID]
+	fmt.Printf("Downloading from node %d, delay %d ms\n", nodeID, m[nodeID])
+	go func() {
+		time.Sleep(time.Duration(waitTime) * time.Millisecond)
+		// atomic.AddInt32(&load, -1)
+		load--
+		waitTime -= m[nodeID]
+	}()
+
+	return &pb.Load{Load: int32(waitTime)}, nil
 }
 
 func findNode(nodes []int32) int32 {
@@ -82,8 +117,8 @@ func findNode(nodes []int32) int32 {
 	return nodeID
 }
 
-func handleDownload(fileName string) (err error) {
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func handleGetLoad(nodeID int32) {
+	conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", nodeID), grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 	if err != nil {
 		log.Error(err)
@@ -91,14 +126,43 @@ func handleDownload(fileName string) (err error) {
 	}
 	defer conn.Close()
 
-	c := pb.NewTrackingClient(conn)
+	c := pb.NewNodeClient(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	r, err := c.Find(ctx, &pb.String{Message: fileName})
+	r, err := c.GetLoad(ctx, &pb.Empty{})
 	if err != nil {
 		log.Error(err)
 		return
+	}
+
+	fmt.Println(r.GetLoad())
+}
+
+func handleDownload(fileName string) (err error) {
+	var r *pb.IDs
+
+	for success := false; !success; {
+		conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+		if err != nil {
+			log.Error(err)
+			return err
+		}
+		defer conn.Close()
+
+		c := pb.NewTrackingClient(conn)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		r, err = c.Find(ctx, &pb.String{Message: fileName})
+		if err != nil {
+			// log.Error(err)
+			log.Info("Server is down, retrying in 3 Second...")
+			time.Sleep(time.Second * 3)
+		} else {
+			success = true
+		}
 	}
 
 	if (r.GetNodeID() == nil) || (len(r.GetNodeID()) == 0) {
@@ -131,54 +195,63 @@ func handleDownload(fileName string) (err error) {
 			return
 		}
 
-		fmt.Printf("Downloading from node %d\n", nodeID)
+		log.Info(fmt.Sprintf("Downloading from node %d...\n", nodeID))
 
 		// download the file
-		conn, err = grpc.Dial(fmt.Sprintf("localhost:%d", nodeID), grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(fmt.Sprintf("localhost:%d", nodeID), grpc.WithTransportCredentials(insecure.NewCredentials()))
 
 		if err != nil {
 			log.Error(err)
-			return
+			return err
 		}
 		defer conn.Close()
 
 		c_node := pb.NewNodeClient(conn)
 
-		ctx_node, cancel_node := context.WithTimeout(context.Background(), time.Second)
+		ctx_node, cancel_node := context.WithTimeout(context.Background(), time.Second*10)
 		defer cancel_node()
 		r_node, err_node := c_node.Download(ctx_node, &pb.DownloadMessage{Filename: fileName, NodeID: int32(*port)})
 		if err_node != nil {
-			log.Error(err_node)
-			return
+			log.Info("Node is down, retrying to find another node...")
+
+			for i, node := range Nodes {
+				if node == nodeID {
+					Nodes = append(Nodes[:i], Nodes[i+1:]...)
+					break
+				}
+			}
+
+			continue
 		}
 
-		if !r_node.GetSuccess() {
+		toWait := r_node.GetLoad()
+		if toWait == -1 {
 			log.Error("Download failed!")
 		}
 
 		// mimic the latency
 		fmt.Printf("Latency: %d ms\n", m[nodeID])
-		time.Sleep(time.Duration(m[nodeID]) * time.Millisecond)
+		time.Sleep(time.Duration(toWait) * time.Millisecond)
 
 		// copy the file to my folder
 		_, error := copy(fmt.Sprintf("share/%d/%d/%s", nodeID, *port, fileName), fmt.Sprintf("files/%d/%s", *port, fileName))
 
 		if error != nil {
 			log.Error(error)
-			return
+			return error
 		}
 		if a > 0 {
 			// slightly modify the file to make sure the MD5 is different
 			f, err_ := os.OpenFile(fmt.Sprintf("files/%d/%s", *port, fileName), os.O_APPEND|os.O_WRONLY, 0644)
 			if err_ != nil {
 				log.Error(err_)
-				return
+				return err_
 			}
 			defer f.Close()
 
 			if _, err_ := f.WriteString(" "); err_ != nil {
 				log.Error(err_)
-				return
+				return err_
 			}
 			a--
 		}
@@ -254,7 +327,7 @@ func updateList(filename string) (err error) {
 	defer cancel()
 	r, err := c.UpdateList(ctx, &pb.UpdateMessage{NodeID: int32(*port), Filename: filename, Md5: md5})
 	if err != nil {
-		log.Error(err)
+		log.Info("Server is down!")
 		return err
 	}
 
@@ -269,6 +342,7 @@ func PrintMenu() {
 	fmt.Println("-----------------")
 	fmt.Println("\nMenu:")
 	fmt.Println("\t1. Download")
+	fmt.Println("\t2. GetLoad")
 	fmt.Println("\tq. Exit")
 	fmt.Print("> ")
 }
@@ -319,17 +393,6 @@ func main() {
 		}
 	}
 
-	// start the server in a goroutine
-	// lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
-	// go func() {
-	// 	s := grpc.NewServer()
-	// 	pb.RegisterNodeServer(s, &server{})
-	// 	log.Info("Node listening at ", lis.Addr())
-	// 	if err := s.Serve(lis); err != nil {
-	// 		log.Fatalf("failed to serve: ", err)
-	// 	}
-	// }()
-
 	wg.Add(1)
 	go func(addr string) {
 		defer wg.Done()
@@ -358,7 +421,8 @@ func main() {
 	for _, f := range files {
 		if !f.IsDir() {
 			if err := updateList(f.Name()); err != nil {
-				log.Error(err)
+				// log.Error(err)
+				break
 			}
 		}
 	}
@@ -393,12 +457,30 @@ func main() {
 			content, err = buf.ReadString('\n')
 			// remove the newline character
 			content = strings.TrimSuffix(content, "\n")
-			println(content)
 			if err != nil {
 				log.Error(err)
 				break
 			}
 			handleDownload(content)
+		case "2\n":
+			var content string
+			fmt.Print("Enter node ID: ")
+			// _, err := fmt.Scanf("%s", &content)
+			content, err = buf.ReadString('\n')
+			// remove the newline character
+			content = strings.TrimSuffix(content, "\n")
+			if err != nil {
+				log.Error(err)
+				break
+			}
+			i, err := strconv.Atoi(content)
+
+			if err != nil {
+				log.Error(err)
+				break
+			}
+
+			handleGetLoad(int32(i))
 		default:
 			fmt.Println("Invalid input!")
 		}
