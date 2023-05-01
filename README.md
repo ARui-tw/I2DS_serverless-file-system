@@ -279,6 +279,24 @@ Let us assume that Node C (NodeID: 50054) crashes unexpectedly. We can emulate t
         ```
 Now, the node will update the server with its new file list. The server will then update its own file list. The node will then be able to interact with the system as normal.
 
+### Test Case #5:
+Multiple Download - this will show how the nodes handle multiple download.
+- Move to testing folder
+    ```sh
+    cd testing
+    ```
+- Run script
+    ```sh
+    sh run.sh
+    ```
+- Cleanup (Killing processes)
+    ```sh
+    sh cleanup.sh
+    ```
+
+`run.sh` will download file from node A via the other two nodes at the same time.
+
+
 ## Pledge
 
 No-one sought out any on-line solutions, e.g. github for portions of this lab
