@@ -6,6 +6,7 @@ package SFS;
 service Node {
   rpc GetLoad(Empty) returns (Load) {}
   rpc Download(DownloadMessage) returns (ACK) {}
+  rpc GetList(Empty) returns (ACK) {}
 }
 
 service Tracking {
@@ -31,10 +32,12 @@ message DownloadMessage {
 message UpdateMessage {
   int32 NodeID = 1;
   string filename = 2;
+  string md5 = 3;
 }
 
 message IDs {
   repeated int32 NodeID = 1;
+  string md5 = 2;
 }
 
 message ACK {

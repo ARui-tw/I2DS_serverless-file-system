@@ -1,0 +1,44 @@
+{
+	"primary": 50051,
+	"nodes": [
+		{
+			"id": 50052,
+			"latency": [
+				{
+					"dest": 50053,
+					"latency": 1000
+				},
+				{
+					"dest": 50054,
+					"latency": 5000
+				}
+			]
+		},
+		{
+			"id": 50053,
+			"latency": [
+				{
+					"dest": 50052,
+					"latency": 1000
+				},
+				{
+					"dest": 50054,
+					"latency": 3000
+				}
+			]
+		},
+		{
+			"id": 50054,
+			"latency": [
+				{
+					"dest": 50052,
+					"latency": 5000
+				},
+				{
+					"dest": 50053,
+					"latency": 3000
+				}
+			]
+		}
+	]
+}

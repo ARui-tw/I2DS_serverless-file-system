@@ -13,11 +13,13 @@ import (
 )
 
 var (
-	port = flag.Int("port", 50051, "The server port")
+	port        = flag.Int("port", 50051, "The server port")
+	config_file = flag.String("config_file", "config.json", "The server config file")
 )
 
 var (
-	m map[string][]int32
+	m   map[string][]int32
+	md5 map[string]string
 )
 
 type server struct {
@@ -25,10 +27,20 @@ type server struct {
 }
 
 func (s *server) Find(ctx context.Context, in *pb.String) (*pb.IDs, error) {
-	return &pb.IDs{NodeID: m[in.GetMessage()]}, nil
+	return &pb.IDs{NodeID: m[in.GetMessage()], Md5: md5[in.GetMessage()]}, nil
 }
 
 func (s *server) UpdateList(ctx context.Context, in *pb.UpdateMessage) (*pb.ACK, error) {
+	// check if the file is already in the list
+	if _, ok := md5[in.GetFilename()]; !ok {
+		md5[in.GetFilename()] = in.GetMd5()
+	} else {
+		if md5[in.GetFilename()] != in.GetMd5() {
+			log.Error("MD5 mismatch")
+			return &pb.ACK{Success: false}, nil
+		}
+	}
+
 	// update the list, but don't add if the node is already in the list
 	for _, nodeID := range m[in.GetFilename()] {
 		if nodeID == in.GetNodeID() {
@@ -51,6 +63,7 @@ func main() {
 	s := grpc.NewServer()
 
 	m = make(map[string][]int32)
+	md5 = make(map[string]string)
 
 	pb.RegisterTrackingServer(s, &server{})
 	log.Info("Single server listening at ", lis.Addr())
