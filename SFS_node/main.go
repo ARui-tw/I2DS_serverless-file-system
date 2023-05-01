@@ -26,9 +26,10 @@ import (
 )
 
 var (
-	port        = flag.Int("port", 50052, "The server port")
-	server_port = flag.Int("server_port", 50051, "The server port")
-	config_file = flag.String("config_file", "config.json", "The server config file")
+	port              = flag.Int("port", 50052, "The server port")
+	server_port       = flag.Int("server_port", 50051, "The server port")
+	config_file       = flag.String("config_file", "config.json", "The server config file")
+	modify_file_count = flag.Int("modify_file_count", 0, "The count of files to be modified")
 )
 
 var (
@@ -59,7 +60,6 @@ type server struct {
 }
 
 func (s *server) GetLoad(ctx context.Context, in *pb.Empty) (*pb.Load, error) {
-	// TODO: get load
 	return &pb.Load{Load: load}, nil
 }
 
@@ -95,7 +95,7 @@ func (s *server) Download(ctx context.Context, in *pb.DownloadMessage) (*pb.Load
 	// atomic.AddInt32(&load, 1)
 	load++
 	waitTime += m[nodeID]
-	fmt.Printf("Downloading from node %d, delay %d ms\n", nodeID, m[nodeID])
+	log.Info(fmt.Sprintf("Downloading from node %d, delay %d ms\n", nodeID, m[nodeID]))
 	go func() {
 		time.Sleep(time.Duration(waitTime) * time.Millisecond)
 		// atomic.AddInt32(&load, -1)
@@ -107,7 +107,6 @@ func (s *server) Download(ctx context.Context, in *pb.DownloadMessage) (*pb.Load
 }
 
 func findNode(nodes []int32) int32 {
-	// TODO: find the node with the least load
 	if len(nodes) == 0 {
 		return -1
 	}
@@ -172,7 +171,7 @@ func handleDownload(fileName string) (err error) {
 	Nodes := r.GetNodeID()
 
 	// NOTE: modify the file n times
-	a := 0
+	a := *modify_file_count
 
 	for success := false; !success; {
 		// select a random node
@@ -275,7 +274,7 @@ func handleDownload(fileName string) (err error) {
 		success = true
 	}
 
-	fmt.Println("Download success!")
+	log.Info("Download success!")
 
 	// update the list
 	if err := updateList(fileName); err != nil {
@@ -457,6 +456,7 @@ func main() {
 			content, err = buf.ReadString('\n')
 			// remove the newline character
 			content = strings.TrimSuffix(content, "\n")
+			fmt.Println(content)
 			if err != nil {
 				log.Error(err)
 				break
